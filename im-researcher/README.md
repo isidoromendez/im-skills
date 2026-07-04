@@ -1,5 +1,11 @@
 # Phased Research Workflow Skill
 
+To install this skill, run:
+
+```bash
+npx skills add isidoromendez/im-skills --skill phased-research-workflow
+```
+
 This skill implements a structured, state-persisted research workflow. It is designed to guide an AI agent through a rigorous four-phase research process with human-in-the-loop validation gates.
 
 ## Directory Structure
