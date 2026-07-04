@@ -1,23 +1,17 @@
-# Bitácora de Auditoría — {nombre_proyecto} / iter-{n}
+# Audit Trail — {project_name} / iter-{n}
 
-> Este archivo es de solo-anexado (append-only) y es específico de esta
-> iteración global. Nunca se edita ni se borra una entrada existente; cada
-> evento nuevo se agrega al final con su timestamp en formato ISO 8601 (UTC o
-> con offset explícito). Los eventos a nivel de proyecto (inicio/cierre de
-> iteraciones globales) van en `historial_global.md`, no acá.
+> This file is append-only and is specific to this global iteration. Never edit or delete an existing entry; each new event is appended at the end with its timestamp in ISO 8601 format (UTC or with explicit offset). Project-level events (start/closure of global iterations) go in `global_history.md`, not here.
 >
-> **Nota:** la entrada inicial de este archivo es distinta según el caso:
-> en `iter-0` es `INICIO_INVESTIGACION` (como se ve abajo). En `iter-N` con
-> `N>0`, reemplazar esa primera entrada por una `ITERACION_GLOBAL_INICIADA`
-> que cite la ruta de `iter-{N-1}/sintesis_final.md` usada como insumo.
+> **Note:** The initial entry in this file differs depending on the case:
+> in `iter-0` it is `RESEARCH_INITIATED` (as seen below). In `iter-N` with `N>0`, replace that first entry with a `GLOBAL_ITERATION_STARTED` event citing the path to `iter-{N-1}/final_synthesis.md` used as input.
 
 ---
 
-## [__PENDIENTE_TIMESTAMP__] — INICIO_INVESTIGACION
+## [__PENDING_TIMESTAMP__] — RESEARCH_INITIATED
 
-- **Fase / Iteración global:** iter-0 / mapeo_y_alcance
-- **Evento:** Inicialización del workflow de investigación.
-- **Detalle:** Se crea el estado inicial en `/research-lc-workflow/{nombre_proyecto}/iter-0/estado_investigacion.json`. Tema: "REEMPLAZAR".
-- **Aprobado por usuario:** N/A (evento de sistema)
+- **Phase / Global Iteration:** iter-0 / mapping_and_scope
+- **Event:** Initialization of the research workflow.
+- **Details:** Initial state created in `/research-lc-workflow/{project_name}/iter-0/research_state.json`. Topic: "REPLACE".
+- **Approved by User:** N/A (system event)
 
 ---

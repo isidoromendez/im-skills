@@ -1,0 +1,17 @@
+{
+  "schema_version": "1.0",
+  "project_name": "",
+  "project_path": "/research-lc-workflow/{project_name_snake_case}",
+  "current_iteration": 0,
+  "iterations": [
+    {
+      "number": 0,
+      "state": "in_progress",
+      "path": "iter-0",
+      "start": "__PENDING_TIMESTAMP__",
+      "end": null,
+      "final_synthesis": null
+    }
+  ],
+  "last_updated": "__PENDING_TIMESTAMP__"
+}

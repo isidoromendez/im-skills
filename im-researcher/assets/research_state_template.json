@@ -1,0 +1,56 @@
+{
+  "schema_version": "4.0",
+  "project_name": "",
+  "project_path": "/research-lc-workflow/{project_name_snake_case}",
+  "global_iteration": 0,
+  "iteration_path": "iter-0",
+  "previous_iteration_input": null,
+  "research_topic": "",
+  "objective": "",
+  "current_phase": "mapping_and_scope",
+  "gate_pending": false,
+  "gate_requested_at": null,
+  "phases": {
+    "mapping_and_scope": {
+      "state": "in_progress",
+      "start": "__PENDING_TIMESTAMP__",
+      "end": null,
+      "iterations": 0,
+      "approved_by_user": false,
+      "deliverables": {
+        "scope_requirements": null
+      }
+    },
+    "sources_search": {
+      "state": "pending",
+      "start": null,
+      "end": null,
+      "iterations": 0,
+      "approved_by_user": false,
+      "deliverables": {
+        "document_sources": null
+      }
+    },
+    "in_depth_analysis": {
+      "state": "pending",
+      "start": null,
+      "end": null,
+      "iterations": 0,
+      "approved_by_user": false,
+      "deliverables": {
+        "research_wiki": null
+      }
+    },
+    "data_synthesis": {
+      "state": "pending",
+      "start": null,
+      "end": null,
+      "iterations": 0,
+      "approved_by_user": false,
+      "deliverables": {
+        "final_synthesis": null
+      }
+    }
+  },
+  "last_updated": "__PENDING_TIMESTAMP__"
+}

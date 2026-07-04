@@ -1,366 +1,233 @@
 ---
-name: investigacion-por-fases
-description: Ejecuta un workflow de investigación en cuatro fases obligatorias e iterables (Mapeo y Alcance, Búsqueda de Fuentes, Análisis Profundo, Síntesis de Datos), repetible indefinidamente como "iteraciones globales" (iter-0, iter-1, ... iter-n) donde cada nueva vuelta parte de la síntesis final de la anterior. Persiste estado en disco vía MCP filesystem bajo /research-lc-workflow/{nombre_proyecto}/iter-N, con un archivo de detalle por fase y control estricto human-in-the-loop. Usar SIEMPRE ante pedidos de iniciar, continuar, retomar, re-iterar o auditar una "investigación" o "research" formal, o mención de `research-lc-workflow`, `estado_investigacion.json`, "gate de aprobación", "fuentes de investigación", "nueva iteración", "iter-0/iter-n". También activar ante "en qué fase estamos", "aprueba para continuar", "quiero otra vuelta de esta investigación", o al retomar un proyecto previo por nombre. No usar para consultas puntuales de un solo turno sin seguimiento de estado.
+name: phased-research-workflow
+description: Executes a research workflow in four mandatory and iterable phases (Mapping and Scope, Sources Search, In-Depth Analysis, Data Synthesis), repeatable indefinitely as "global iterations" (iter-0, iter-1, ... iter-n) where each new loop starts from the final synthesis of the previous one. Persists state to disk via MCP filesystem under /research-lc-workflow/{project_name}/iter-N, with a detailed file per phase and strict human-in-the-loop validation gate control. ALWAYS use when asked to start, continue, resume, re-iterate, or audit a formal "investigation" or "research", or upon mention of `research-lc-workflow`, `research_state.json` (or `estado_investigacion.json`), "approval gate", "research sources", "new iteration", "iter-0/iter-n". Also activate when asked "what phase are we in", "approve to continue", "I want another iteration of this research", or when resuming a prior project by name. Do not use for one-off single-turn queries without state tracking.
 ---
 
-# Investigación por Fases (Gated Research Workflow)
+# Phased Research Workflow (Gated Research Workflow)
 
-Skill para conducir investigaciones multi-etapa con estado persistente en disco,
-un nombre de proyecto obligatorio, aprobación humana obligatoria entre fases,
-un archivo de detalle específico por fase (progressive disclosure), y la
-posibilidad de repetir el workflow completo indefinidamente en "iteraciones
-globales" encadenadas.
+Skill for conducting multi-stage research with persistent on-disk state, a mandatory project name, mandatory human approval between phases, a specific detail file per phase (progressive disclosure), and the ability to repeat the entire workflow indefinitely in chained "global iterations."
 
-**Dos niveles de iteración — no confundir:**
-- **Iteración de fase** (ya existía): rondas de ajuste sobre el borrador de
-  UNA fase, antes de que se abra su gate de aprobación. Vive dentro de
-  `fases.<fase>.iteraciones` en `estado_investigacion.json` (ver sección 3).
-- **Iteración global** (nueva en esta versión): una corrida COMPLETA de las
-  cuatro fases, de punta a punta. Cada iteración global vive en su propia
-  carpeta `iter-N/` y, a partir de `iter-1`, arranca usando como insumo la
-  `sintesis_final.md` de la iteración global anterior (ver sección 4bis).
+**Two levels of iteration — do not confuse:**
+- **Phase iteration**: Adjustment rounds on the draft of a SINGLE phase before its approval gate is opened. Lives within `phases.<phase>.iterations` in `research_state.json` (see Section 3).
+- **Global iteration**: A COMPLETE run of all four phases, from start to finish. Each global iteration lives in its own `iter-N/` directory and, starting from `iter-1`, begins using the `final_synthesis.md` from the previous global iteration as input (see Section 4bis).
 
-**Requisito de portabilidad:** este skill es agnóstico al sistema operativo.
-Todas las operaciones de disco se hacen exclusivamente a través de las
-herramientas del servidor MCP `filesystem` (o un servidor MCP equivalente que
-el entorno tenga conectado). **Está prohibido usar una herramienta de
-shell/bash** para leer, crear, anexar o modificar cualquier archivo de este
-workflow, ni para obtener la fecha/hora.
+**Portability requirement:** This skill is operating system agnostic. All disk operations must be performed exclusively using the MCP `filesystem` server tools (or an equivalent MCP server connected to the environment). **It is strictly forbidden to use shell/bash tools** to read, create, append, or modify any files for this workflow, or to obtain the date/time.
 
 ---
 
-## 1. Directivas Maestras (System Prompt del agente)
+## 1. Master Directives (Agent's System Prompt)
 
-1. **Nombre de proyecto obligatorio, determinado en Fase 1 de `iter-0`.**
-   Ninguna investigación puede arrancar sin un nombre de proyecto. Si el
-   usuario no lo dio, preguntarlo explícitamente al arrancar `iter-0`. No se
-   crea ningún archivo en disco hasta tener este nombre. El nombre de
-   proyecto es fijo para todas las iteraciones globales futuras de esa
-   investigación.
+1. **Mandatory project name, determined in Phase 1 of `iter-0`.**
+   No research can start without a project name. If the user has not provided one, ask for it explicitly when starting `iter-0`. No files are created on disk until this name is defined. The project name is fixed for all future global iterations of that research.
 
-2. **Ruta raíz fija y derivada del nombre de proyecto, con subcarpeta por
-   iteración global:**
+2. **Fixed root path derived from the project name, with a subdirectory per global iteration:**
    ```
-   /research-lc-workflow/{nombre_proyecto_snake_case}/iter-{n}/
+   /research-lc-workflow/{project_name_snake_case}/iter-{n}/
    ```
-   donde `n` arranca en `0` y se incrementa en 1 en cada nueva iteración
-   global (nunca se reutiliza ni se rellena un número salteado). Ver sección
-   2.4 para snake_case, sección 2.5 para resolución de directorios permitidos,
-   y sección 4bis para el ciclo completo de iteraciones globales.
+   where `n` starts at `0` and increments by 1 for each new global iteration (never reuse or skip numbers). See Section 2.4 for snake_case conversion, Section 2.5 for allowed directory resolution, and Section 4bis for the full global iteration cycle.
 
-3. **Fuente única de verdad, por iteración y a nivel de proyecto.** El estado
-   de una iteración global es SIEMPRE `iter-N/estado_investigacion.json`. El
-   estado global del proyecto (cuántas iteraciones hay, cuál es la vigente)
-   es SIEMPRE `proyecto.json` en la raíz del proyecto (fuera de cualquier
-   `iter-N/`). Ninguno de los dos se infiere de la memoria de la conversación.
+3. **Single source of truth, per iteration and at project level.** The state of a global iteration is ALWAYS `iter-N/research_state.json`. The global state of the project (how many iterations exist, which one is active) is ALWAYS `project.json` in the root of the project (outside any `iter-N/`). Neither is inferred from the conversation history.
 
-4. **Cuatro fases, orden estricto, dentro de cada iteración global:**
-   - `mapeo_y_alcance`
-   - `busqueda_fuentes`
-   - `analisis_profundo`
-   - `sintesis_datos`
+4. **Four phases, strict order, within each global iteration:**
+   - `mapping_and_scope`
+   - `sources_search`
+   - `in_depth_analysis`
+   - `data_synthesis`
 
-5. **El agente solo carga el detalle de la fase activa.** Cada fase tiene su
-   propio archivo de referencia `references/fase-N-detalle.md` (bundled en
-   este skill, no en la carpeta del proyecto). El agente no lee el detalle de
-   otras fases, salvo para usar el *entregable* (no las instrucciones) de una
-   fase anterior como insumo de la fase activa. Esto es lo mismo dentro de
-   cualquier iteración global.
+5. **The agent only loads the details of the active phase.** Each phase has its own reference file `references/phase-N-details.md` (bundled in this skill, not in the project folder). The agent does not read details of other phases, except to use the *deliverable* (not the instructions) of a previous phase as input for the active phase. This applies across any global iteration.
 
-6. **Toda fase es iterable antes de su aprobación** (iteración de fase, ver
-   directiva de terminología arriba y sección 3). El usuario decide cuántas
-   rondas de ajuste necesita.
+6. **Every phase is iterable before approval** (phase iteration, see terminology directive above and Section 3). The user decides how many adjustment rounds are needed.
 
-7. **El workflow completo es iterable indefinidamente** (iteración global,
-   ver sección 4bis). Al llegar `sintesis_datos` a `"finalizada"`, el agente
-   NUNCA arranca automáticamente una nueva iteración global — se lo ofrece al
-   usuario y espera que lo pida explícitamente.
+7. **The entire workflow is repeatable indefinitely** (global iteration, see Section 4bis). Upon reaching `"completed"` for `data_synthesis`, the agent NEVER starts a new global iteration automatically — it offers it to the user and waits for them to explicitly request it.
 
-8. **Gate de aprobación humana.** Al terminar (a satisfacción del usuario, no
-   antes) el entregable de la fase activa, el agente marca
-   `gate_pendiente: true`, se detiene, y espera una aprobación explícita.
-   Mensajes ambiguos ("dale", "ok", "seguí") NUNCA se interpretan como
-   aprobación. Un pedido de más cambios es una iteración de fase, no un
-   rechazo; el gate simplemente no se abrió todavía.
+8. **Human approval gate.** Upon finishing the deliverable of the active phase (to the user's satisfaction, not before), the agent sets `gate_pending: true`, stops, and waits for explicit approval. Ambiguous messages ("go ahead", "ok", "continue") are NEVER interpreted as approval. A request for more changes is a phase iteration, not a rejection; the gate simply hasn't opened yet.
 
-9. **Nunca escribir cambios de fase ni de iteración global sin aprobación/
-   confirmación registrada.** `fase_actual` solo cambia después de una
-   aprobación explícita registrada en `iter-N/audit.md`. Una nueva iteración
-   global (`iter-{n+1}`) solo se crea después de que el usuario la pida
-   explícitamente, registrado en `historial_global.md`.
+9. **Never write phase or global iteration changes without recorded approval/confirmation.** `current_phase` only changes after an explicit approval is recorded in `iter-N/audit.md`. A new global iteration (`iter-{n+1}`) is only created after the user explicitly requests it, recorded in `global_history.md`.
 
-10. **Todo hito relevante se audita** (append-only): a nivel de iteración
-    global en `iter-N/audit.md` (inicio de fase, iteración de fase, gate,
-    aprobación/rechazo), y a nivel de proyecto en `historial_global.md`
-    (inicio/cierre de cada iteración global). Ver secciones 2.2 y 6.
+10. **Every relevant milestone is audited** (append-only): at global iteration level in `iter-N/audit.md` (phase start, phase iteration, gate request, approval/rejection), and at project level in `global_history.md` (start/closure of each global iteration). See Sections 2.2 and 6.
 
-11. **Timestamps en ISO 8601, obtenidos sin shell** (ver sección 2.3).
+11. **ISO 8601 timestamps, obtained without shell** (see Section 2.3).
 
-12. **Condensación de contexto al cerrar cada fase y al cerrar cada iteración
-    global, y recomendación de conversación nueva.** El agente no tiene forma
-    de borrar el historial de la conversación actual — ninguna herramienta de
-    este entorno lo permite. Lo que sí debe hacer:
-    - Al aprobar el gate de cada fase: actualizar `iter-N/contexto_condensado.md`
-      (resumen breve para retomar esa iteración global, ver
-      `assets/contexto_condensado_template.md`).
-    - Al cerrar una iteración global completa (Fase 4 aprobada): además,
-      anexar a `historial_global.md` un resumen de esa iteración (qué cambió
-      respecto de la anterior, ruta de su `sintesis_final.md`).
-    - En ambos casos, decirle al usuario que puede abrir una conversación
-      nueva para continuar (fase siguiente, o próxima iteración global) sin
-      perder nada, porque todo el contexto necesario quedó en disco. Esto es
-      una sugerencia, nunca una acción automática.
+12. **Context condensation when closing each phase and each global iteration, with a recommendation for a new conversation.** The agent cannot clear the current conversation history. What it must do instead:
+    - Upon approving the gate of each phase: update `iter-N/condensed_context.md` (brief summary to resume this global iteration, see `assets/condensed_context_template.md`).
+    - Upon closing a complete global iteration (Phase 4 approved): also append a summary of that iteration to `global_history.md` (what changed relative to the previous one, path to its `final_synthesis.md`).
+    - In both cases, inform the user that they can open a new conversation to continue (next phase or next global iteration) without losing anything, as all necessary context is saved on disk. This is a recommendation, never an automatic action.
 
-13. **Persistencia exclusiva en disco vía MCP filesystem**, sin depender de
-    memoria de conversación ni de shell/bash.
+13. **Exclusive persistence on disk via MCP filesystem**, without relying on conversation memory or shell/bash commands.
 
 ---
 
-## 2. Declaración de Herramientas (Tools) y mecánica común
+## 2. Tool Declaration and Common Mechanics
 
-### 2.1 Mapeo de operaciones a herramientas MCP
+### 2.1 Mapping operations to MCP tools
 
-| Operación                                            | Herramienta MCP a usar                       |
-|-------------------------------------------------------|-----------------------------------------------|
-| Confirmar directorios permitidos                      | `filesystem:list_allowed_directories`         |
-| Verificar si existe la carpeta del proyecto / de una iteración | `filesystem:list_directory` (del padre) o `filesystem:get_file_info` |
-| Detectar cuántas `iter-N/` existen ya                 | `filesystem:list_directory` sobre la carpeta del proyecto (filtrar prefijo `iter-`) |
-| Crear carpetas (proyecto o `iter-N/`)                 | `filesystem:create_directory` (idempotente, crea intermedios) |
-| Leer cualquier archivo del proyecto/iteración o `references/fase-N-detalle.md` | `filesystem:read_text_file` |
-| Crear un archivo por primera vez                      | `filesystem:write_file` (solo si no existe)   |
-| Actualizar campos puntuales de `estado_investigacion.json` o `proyecto.json` | `filesystem:edit_file` (oldText/newText exacto — nunca reescribir todo de memoria) |
-| Anexar una entrada nueva a `audit.md` o `historial_global.md` | Patrón leer-y-reescribir (ver 2.2) |
-| Obtener el timestamp real (ISO 8601)                  | Ver 2.3 — nunca shell                         |
-| Listar contenido de un directorio                     | `filesystem:list_directory`                   |
+| Operation | MCP Tool to Use |
+|---|---|
+| Confirm allowed directories | `filesystem:list_allowed_directories` |
+| Verify if project or iteration folder exists | `filesystem:list_directory` (of parent) or `filesystem:get_file_info` |
+| Detect how many `iter-N/` directories exist | `filesystem:list_directory` on project folder (filter `iter-` prefix) |
+| Create folders (project or `iter-N/`) | `filesystem:create_directory` (idempotent, creates parent dirs) |
+| Read any project/iteration file or `references/phase-N-details.md` | `filesystem:read_text_file` |
+| Create a file for the first time | `filesystem:write_file` (only if it doesn't exist) |
+| Update specific fields of `research_state.json` or `project.json` | `filesystem:edit_file` (exact oldText/newText — never rewrite completely from memory) |
+| Append a new entry to `audit.md` or `global_history.md` | Read-and-rewrite pattern (see 2.2) |
+| Get real timestamp (ISO 8601) | See 2.3 — never shell |
+| List directory contents | `filesystem:list_directory` |
 
-Si no hay MCP `filesystem` (ni equivalente) conectado, avisar al usuario y
-sugerir habilitarlo — nunca usar shell/bash como sustituto.
+If no MCP `filesystem` (or equivalent) is connected, alert the user and suggest enabling it — never use shell/bash as a fallback.
 
-### 2.2 Append-only real sin shell
+### 2.2 True Append-only without Shell
 
-`filesystem:write_file` sobreescribe el archivo completo. Para anexar a
-`audit.md` o a `historial_global.md`: (1) `read_text_file` completo, (2)
-construir en memoria `contenido_leído + nueva_entrada` (nunca al revés), (3)
-`write_file` con el contenido completo. Nunca omitir el paso 1.
+`filesystem:write_file` overwrites the complete file. To append to `audit.md` or `global_history.md`: (1) read the full file with `read_text_file`, (2) construct in memory `read_content + new_entry` (never the other way around), (3) `write_file` with the complete content. Never skip step 1.
 
-### 2.3 Timestamp real (ISO 8601) sin shell
+### 2.3 Real Timestamp (ISO 8601) without Shell
 
-1. Escribir el archivo objetivo con un marcador temporal
-   `"__PENDIENTE_TIMESTAMP__"` en el campo de fecha.
-2. Llamar `filesystem:get_file_info` sobre ese mismo archivo — su fecha de
-   modificación refleja el instante real de la escritura.
-3. Reemplazar el marcador por ese valor con `filesystem:edit_file`.
-4. Nunca invocar `date`, `Get-Date` ni ningún comando de shell; nunca inventar
-   la hora de memoria.
+1. Write the target file with a temporary placeholder `"__PENDING_TIMESTAMP__"` in the date field.
+2. Call `filesystem:get_file_info` on that same file — its modification time reflects the actual write instant.
+3. Replace the placeholder with that value using `filesystem:edit_file`.
+4. Never invoke `date`, `Get-Date`, or any shell command; never invent the time from memory.
 
-### 2.4 Normalización del nombre de proyecto a snake_case
+### 2.4 Project Name Normalization to snake_case
 
-Para construir `{nombre_proyecto_snake_case}`: pasar a minúsculas, quitar
-tildes/diacríticos, reemplazar cualquier secuencia de espacios o caracteres no
-alfanuméricos por un solo guion bajo `_`, y quitar guiones bajos al inicio/
-final. Ejemplo: "Impacto de la IA en Educación Rural" →
-`impacto_de_la_ia_en_educacion_rural`. Confirmar con el usuario el nombre
-resultante antes de crear la carpeta. Este nombre se fija una sola vez, en
-`iter-0`, y no se vuelve a pedir en iteraciones globales posteriores de la
-misma investigación.
+To construct `{project_name_snake_case}`: convert to lowercase, remove accents/diacritics, replace any sequence of spaces or non-alphanumeric characters with a single underscore `_`, and trim leading/trailing underscores. Example: "Impact of AI in Rural Education" → `impact_of_ai_in_rural_education`. Confirm the resulting name with the user before creating the directory. This name is set once in `iter-0` and is not requested again in subsequent global iterations of the same research.
 
-### 2.5 Resolución de la ruta raíz
+### 2.5 Root Path Resolution
 
-Antes de crear nada, llamar `filesystem:list_allowed_directories`:
-- Si `/research-lc-workflow` (o su padre) está entre los permitidos, usar esa
-  ruta absoluta tal cual.
-- Si no, crear `research-lc-workflow/{nombre_proyecto_snake_case}` como
-  subcarpeta dentro del primer directorio permitido, e informarle al usuario
-  la ruta real resultante.
-- Nunca asumir un path sin haber consultado `list_allowed_directories` al
-  menos una vez por sesión.
+Before creating anything, call `filesystem:list_allowed_directories`:
+- If `/research-lc-workflow` (or its parent) is among the allowed directories, use that absolute path as is.
+- Otherwise, create `research-lc-workflow/{project_name_snake_case}` as a subdirectory within the first allowed directory and inform the user of the resulting absolute path.
+- Never assume a path without having called `list_allowed_directories` at least once per session.
 
 ---
 
-## 3. Ciclo de trabajo por fase (con iteración de fase) — aplica a las 4 fases, dentro de cualquier iter-N
+## 3. Work Cycle per Phase (with Phase Iteration) — Applies to all 4 phases within any iter-N
 
 ```
-1. filesystem:list_allowed_directories (si no se hizo ya esta sesión)
-2. filesystem:read_text_file sobre iter-N/estado_investigacion.json
-   → confirmar fase_actual y gate_pendiente=false
-3. Leer SOLO references/fase-<F>-detalle.md correspondiente a fase_actual
-4. (Si es la primera vez en esta fase) anexar a iter-N/audit.md: INICIO_FASE,
-   actualizar fases.<fase>.inicio + estado="en_progreso" (edit_file)
-5. Producir/actualizar el borrador del entregable según fase-<F>-detalle.md
-   (en iter-0, fase 1, sin insumo previo; en iter-N>0 fase 1, usando
-   sintesis_final.md de iter-{N-1} — ver sección 4bis)
-6. Presentar el borrador al usuario
-7. Si pide cambios (iteración de fase):
-     - Anexar ITERACION_SOLICITADA a iter-N/audit.md (2.2)
-     - Incrementar fases.<fase>.iteraciones (edit_file)
-     - Volver al paso 5. gate_pendiente sigue false, fase_actual no cambia.
-8. Cuando el usuario está conforme, el agente ofrece solicitar el gate
-   (nunca lo asume).
-9. Al solicitar el gate: timestamp (2.3), gate_pendiente=true,
-   gate_solicitado_en=<timestamp> (edit_file), anexar SOLICITUD_GATE (2.2).
-10. DETENERSE. Esperar respuesta explícita.
-11a. Aprueba → anexar APROBACION_USUARIO (2.2); actualizar (edit_file):
-       fases.<fase>.fin, aprobado_por_usuario=true, estado="completada",
-       gate_pendiente=false, fase_actual=<siguiente fase, o "finalizada" si
-       era sintesis_datos>; actualizar iter-N/contexto_condensado.md
-       (directiva 12) y sugerir conversación nueva.
-       Si fase_actual pasó a "finalizada" → ver sección 4bis (cierre de
-       iteración global).
-11b. Pide más cambios → tratar como iteración de fase (volver a 7).
-11c. Rechaza el enfoque general → anexar RECHAZO_USUARIO (2.2),
-       gate_pendiente=false, no se avanza de fase, retomar desde el paso 5.
+1. filesystem:list_allowed_directories (if not done yet this session)
+2. filesystem:read_text_file on iter-N/research_state.json
+   → confirm current_phase and gate_pending=false
+3. Read ONLY the references/phase-<F>-details.md corresponding to current_phase
+4. (If first time in this phase) append to iter-N/audit.md: PHASE_STARTED,
+   update phases.<phase>.start + state="in_progress" (edit_file)
+5. Produce/update the draft of the deliverable according to phase-<F>-details.md
+   (in iter-0, phase 1, without previous inputs; in iter-N>0 phase 1, using
+   final_synthesis.md from iter-{N-1} — see Section 4bis)
+6. Present the draft to the user
+7. If changes are requested (phase iteration):
+     - Append ITERATION_REQUESTED to iter-N/audit.md (2.2)
+     - Increment phases.<phase>.iterations (edit_file)
+     - Go back to step 5. gate_pending remains false, current_phase does not change.
+8. When the user is satisfied, the agent offers to request the gate (never assumes it).
+9. Upon requesting the gate: timestamp (2.3), gate_pending=true,
+   gate_requested_at=<timestamp> (edit_file), append GATE_REQUESTED (2.2).
+10. STOP. Wait for explicit response.
+11a. Approved → append USER_APPROVED (2.2); update (edit_file):
+       phases.<phase>.end, approved_by_user=true, state="completed",
+       gate_pending=false, current_phase=<next phase, or "finalized" if
+       it was data_synthesis>; update iter-N/condensed_context.md
+       (directive 12) and suggest a new conversation.
+       If current_phase transitioned to "finalized" → see Section 4bis (global iteration closure).
+11b. Asks for more changes → treat as phase iteration (go back to 7).
+11c. Rejects general approach → append USER_REJECTED (2.2),
+       gate_pending=false, do not advance phase, resume from step 5.
 ```
 
 ---
 
-## 4. Inicialización de una Investigación Nueva (siempre crea `iter-0`)
+## 4. Initializing a New Research Project (Always creates `iter-0`)
 
-1. Si el usuario no dio nombre de proyecto, preguntarlo (directiva 1).
-2. Normalizar a snake_case (2.4) y confirmar con el usuario.
-3. `filesystem:list_allowed_directories` y resolver la ruta raíz (2.5).
-4. `filesystem:create_directory` sobre
-   `/research-lc-workflow/{nombre_proyecto_snake_case}/iter-0/`.
-5. Crear, con `filesystem:write_file`, a partir de las plantillas de
-   `assets/`:
-   - En la raíz del proyecto: `proyecto.json` (de
-     `proyecto_template.json`, completando `nombre_proyecto`, con
-     `iteracion_actual: 0` y una sola entrada en `iteraciones`) y
-     `historial_global.md` (de `historial_global_template.md`).
-   - Dentro de `iter-0/`: `estado_investigacion.json` (de
-     `estado_investigacion_template.json`, con `iteracion_global: 0` y
-     `entrada_iteracion_anterior: null`), `audit.md`, y
-     `contexto_condensado.md`.
-6. Resolver los timestamps pendientes (2.3).
-7. Confirmar al usuario la ruta creada y arrancar las tareas de
-   `mapeo_y_alcance` leyendo `references/fase-1-detalle.md`.
+1. If the user did not provide a project name, ask for it (directive 1).
+2. Normalize to snake_case (2.4) and confirm with the user.
+3. Call `filesystem:list_allowed_directories` and resolve the root path (2.5).
+4. Call `filesystem:create_directory` on `/research-lc-workflow/{project_name_snake_case}/iter-0/`.
+5. Create the following files with `filesystem:write_file` using the templates in `assets/`:
+   - In the project root: `project.json` (from `project_template.json`, filling `project_name`, with `current_iteration: 0` and a single entry in `iterations`) and `global_history.md` (from `global_history_template.md`).
+   - Inside `iter-0/`: `research_state.json` (from `research_state_template.json`, with `global_iteration: 0` and `previous_iteration_input: null`), `audit.md`, and `condensed_context.md`.
+6. Resolve pending timestamps (2.3).
+7. Confirm the created path to the user and start `mapping_and_scope` tasks by reading `references/phase-1-details.md`.
 
 ---
 
-## 4bis. Iteraciones Globales — repetir el workflow completo
+## 4bis. Global Iterations — Repeating the Entire Workflow
 
-### Cuándo se ofrece una nueva iteración global
+### When a New Global Iteration is Offered
 
-Únicamente cuando, dentro de la iteración global vigente, se aprueba el gate
-final de `sintesis_datos` (`fase_actual` pasa a `"finalizada"`). En ese
-momento el agente:
-1. Anexa a `iter-N/audit.md` el evento `CIERRE_INVESTIGACION`.
-2. Anexa a `historial_global.md` (2.2) un evento `ITERACION_GLOBAL_CERRADA`
-   con la ruta de `iter-N/sintesis_final.md`.
-3. Actualiza `proyecto.json`: la entrada de esta iteración pasa a
-   `estado: "finalizada"`, con su `fin`.
-4. Le pregunta al usuario, explícitamente, si quiere iniciar una nueva
-   iteración global sobre esta misma investigación, o si la deja cerrada
-   así. **No arranca `iter-{N+1}` sin que el usuario lo pida.**
+Only when, within the active global iteration, the final gate of `data_synthesis` is approved (`current_phase` transitions to `"finalized"`). At that point, the agent:
+1. Appends the event `RESEARCH_CLOSED` to `iter-N/audit.md`.
+2. Appends a `GLOBAL_ITERATION_CLOSED` event to `global_history.md` (2.2), citing the path to `iter-N/final_synthesis.md`.
+3. Updates `project.json`: the entry for this iteration transitions to `state: "finalized"`, with its `end` timestamp.
+4. Explicitly asks the user if they want to start a new global iteration on this same research, or leave it closed. **Do not start `iter-{N+1}` unless the user explicitly requests it.**
 
-El usuario también puede pedir una nueva iteración global en cualquier otro
-momento simplemente diciendo algo como "quiero otra vuelta de esta
-investigación" sobre un proyecto cuya última iteración ya está finalizada —
-no es necesario que lo ofrezca el agente primero.
+The user can also request a new global iteration at any other time by saying something like "I want another iteration of this research" on a project whose last iteration is already finalized — the agent does not need to offer it first.
 
-### Cómo se crea `iter-{n+1}`
+### How `iter-{n+1}` is Created
 
-1. Leer `proyecto.json`, confirmar que la iteración vigente está
-   `"finalizada"`, y determinar `n+1` (siguiente número consecutivo, nunca se
-   reutiliza un número usado antes aunque esa iteración se hubiera
-   abandonado).
-2. `filesystem:create_directory` sobre
-   `/research-lc-workflow/{nombre_proyecto}/iter-{n+1}/`.
-3. Crear dentro, con `filesystem:write_file`, a partir de las plantillas:
-   `estado_investigacion.json` (con `iteracion_global: n+1` y
-   `entrada_iteracion_anterior` apuntando a la ruta de
-   `iter-{n}/sintesis_final.md`), `audit.md`, `contexto_condensado.md`.
-4. Anexar a `iter-{n+1}/audit.md` un evento `ITERACION_GLOBAL_INICIADA` que
-   cite la ruta de la síntesis anterior usada como punto de partida.
-5. Anexar a `historial_global.md` (2.2) el mismo evento a nivel de proyecto.
-6. Actualizar `proyecto.json`: `iteracion_actual: n+1`, agregar la nueva
-   entrada en `iteraciones` con `estado: "en_progreso"`.
-7. Arrancar `mapeo_y_alcance` de `iter-{n+1}` leyendo
-   `references/fase-1-detalle.md`, que instruye explícitamente cómo usar
-   `sintesis_final.md` de `iter-{n}` como insumo de las nuevas preguntas de
-   alcance (no se vuelve a preguntar el nombre de proyecto).
+1. Read `project.json`, confirm that the current iteration is `"finalized"`, and determine `n+1` (the next consecutive integer; never reuse a previously used iteration number even if it was abandoned).
+2. Call `filesystem:create_directory` on `/research-lc-workflow/{project_name}/iter-{n+1}/`.
+3. Create the following files inside using the templates: `research_state.json` (with `global_iteration: n+1` and `previous_iteration_input` pointing to the path of `iter-{n}/final_synthesis.md`), `audit.md`, and `condensed_context.md`.
+4. Append a `GLOBAL_ITERATION_STARTED` event to `iter-{n+1}/audit.md` citing the path of the previous synthesis used as a starting point.
+5. Append the same event to `global_history.md` (2.2) at project level.
+6. Update `project.json`: `current_iteration: n+1`, add the new entry to `iterations` with `state: "in_progress"`.
+7. Start `mapping_and_scope` of `iter-{n+1}` by reading `references/phase-1-details.md`, which explicitly instructs how to use `final_synthesis.md` from `iter-{n}` as input for the new scope questions (do not ask for the project name again).
 
-### Qué NO cambia entre iteraciones globales
+### What Does NOT Change Between Global Iterations
 
-El nombre de proyecto y la ruta raíz del proyecto son fijos. Lo único que se
-repite es el ciclo de 4 fases dentro de una carpeta `iter-N/` nueva.
+The project name and the root path of the project are fixed. Only the 4-phase cycle is repeated inside a new `iter-N/` directory.
 
 ---
 
-## 5. Retomar una Investigación Existente
+## 5. Resuming an Existing Research Project
 
-Si el usuario menciona un nombre de proyecto que ya existe bajo
-`/research-lc-workflow/`, o pide "continuar" sin dar nombre y solo hay un
-proyecto en esa carpeta:
+If the user mentions a project name that already exists under `/research-lc-workflow/`, or asks to "continue" without giving a name and only one project exists in that directory:
 
-1. Leer `proyecto.json` para saber `iteracion_actual` y su estado — NO asumir
-   nada por lo que se charló antes en la conversación, sobre todo si viene de
-   una conversación nueva. Si `proyecto.json` no existe pero sí hay carpetas
-   `iter-N/`, reconstruir el índice listando el directorio del proyecto
-   (`filesystem:list_directory`) como respaldo.
-2. Si la iteración vigente NO está `"finalizada"`: leer
-   `iter-{iteracion_actual}/estado_investigacion.json` y
-   `contexto_condensado.md`, y continuar el ciclo de la sección 3 desde
-   `fase_actual`. Si `gate_pendiente` está en `true`, lo primero es resolver
-   ese gate, no seguir produciendo contenido nuevo.
-3. Si la iteración vigente SÍ está `"finalizada"`: informarle al usuario que
-   esa investigación ya tiene una síntesis final cerrada, mostrar su ruta, y
-   preguntar si quiere iniciar una nueva iteración global (sección 4bis) o
-   solo consultar lo ya producido.
+1. Read `project.json` to find `current_iteration` and its status — DO NOT assume anything from previous conversation history, especially if starting a new conversation. If `project.json` does not exist but `iter-N/` folders do, rebuild the index by listing the project directory (`filesystem:list_directory`) as a backup.
+2. If the current iteration is NOT `"finalized"`: read `iter-{current_iteration}/research_state.json` and `condensed_context.md`, and resume the cycle in Section 3 from `current_phase`. If `gate_pending` is `true`, the first step is to resolve that gate, not to continue producing new content.
+3. If the current iteration IS `"finalized"`: inform the user that this research already has a closed final synthesis, show its path, and ask if they want to start a new global iteration (Section 4bis) or just consult the existing findings.
 
 ---
 
-## 6. Formato de entradas de auditoría
+## 6. Audit Entry Format
 
-Mismo formato de bloque para `iter-N/audit.md` y para `historial_global.md`:
+The same block format applies to `iter-N/audit.md` and `global_history.md`:
 
 ```markdown
-## [<timestamp ISO 8601>] — <TIPO_DE_EVENTO>
+## [__PENDING_TIMESTAMP__] — <EVENT_TYPE>
 
-- **Fase / Iteración global:** <fase_actual o "iter-N">
-- **Evento:** <descripción corta>
-- **Detalle:** <qué se hizo / qué se pidió iterar / qué respondió el usuario>
-- **Aprobado por usuario:** <true|false|N/A> — <cita breve si aplica>
+- **Phase / Global Iteration:** <current_phase or "iter-N">
+- **Event:** <short description>
+- **Details:** <what was done / what changes were requested / what the user replied>
+- **Approved by User:** <true|false|N/A> — <short quote if applicable>
 
 ---
 ```
 
-Tipos de evento en `iter-N/audit.md`: `INICIO_INVESTIGACION` (solo iter-0),
-`ITERACION_GLOBAL_INICIADA` (iter-N>0), `INICIO_FASE`, `ITERACION_SOLICITADA`,
-`SOLICITUD_GATE`, `APROBACION_USUARIO`, `RECHAZO_USUARIO`,
-`CIERRE_INVESTIGACION`.
+Event types in `iter-N/audit.md`: `RESEARCH_INITIATED` (iter-0 only), `GLOBAL_ITERATION_STARTED` (iter-N>0), `PHASE_STARTED`, `ITERATION_REQUESTED`, `GATE_REQUESTED`, `USER_APPROVED`, `USER_REJECTED`, `RESEARCH_CLOSED`.
 
-Tipos de evento en `historial_global.md`: `ITERACION_GLOBAL_INICIADA`,
-`ITERACION_GLOBAL_CERRADA`.
+Event types in `global_history.md`: `GLOBAL_ITERATION_STARTED`, `GLOBAL_ITERATION_CLOSED`.
 
 ---
 
-## 7. Archivos de referencia y plantillas de este skill
+## 7. Skill Reference Files and Templates
 
-Detalle por fase (leer solo el de la fase activa):
-- `references/fase-1-detalle.md` — Mapeo y Alcance
-- `references/fase-2-detalle.md` — Búsqueda de Fuentes
-- `references/fase-3-detalle.md` — Análisis Profundo
-- `references/fase-4-detalle.md` — Síntesis de Datos
+Phase details (read only the active phase):
+- `references/phase-1-details.md` — Mapping and Scope
+- `references/phase-2-details.md` — Sources Search
+- `references/phase-3-details.md` — In-Depth Analysis
+- `references/phase-4-details.md` — Data Synthesis
 
-Plantillas a nivel de proyecto (raíz, fuera de cualquier `iter-N/`):
-- `assets/proyecto_template.json`
-- `assets/historial_global_template.md`
+Project-level templates (root, outside any `iter-N/`):
+- `assets/project_template.json`
+- `assets/global_history_template.md`
 
-Plantillas por iteración global (dentro de cada `iter-N/`):
-- `assets/estado_investigacion_template.json`
+Global iteration templates (inside each `iter-N/`):
+- `assets/research_state_template.json`
 - `assets/audit_template.md`
-- `assets/contexto_condensado_template.md`
-- `assets/fuentes_investigacion_template.md` (entregable Fase 2)
-- `assets/wiki_investigacion_template.md` (entregable Fase 3)
+- `assets/condensed_context_template.md`
+- `assets/research_sources_template.md` (Phase 2 deliverable)
+- `assets/research_wiki_template.md` (Phase 3 deliverable)
 
 ---
 
-## 8. Recordatorio de cumplimiento
+## 8. Compliance Reminder
 
-Si el agente se encuentra tentado a: avanzar de fase o de iteración global sin
-aprobación/pedido explícito, asumir un mensaje ambiguo como aprobación,
-limitar cuántas iteraciones de fase o iteraciones globales "debería" necesitar
-el usuario, cargar el detalle de fases que no están activas, usar shell "solo
-por esta vez", reutilizar un número de `iter-N` ya usado, u olvidar encadenar
-`sintesis_final.md` de la iteración anterior al arrancar una nueva — esa es la
-señal de detenerse. Ninguna de esas cosas está permitida.
+If the agent is tempted to: advance a phase or global iteration without explicit approval/request, interpret an ambiguous message as approval, limit how many phase iterations or global iterations the user "should" need, load details of inactive phases, use the shell "just this once", reuse an `iter-N` number already used, or forget to chain `final_synthesis.md` from the previous iteration when starting a new one — that is the signal to stop. None of those actions are permitted.
